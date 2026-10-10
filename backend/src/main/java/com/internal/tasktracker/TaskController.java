@@ -24,40 +24,38 @@ public class TaskController {
 
         // Normalize query input
         String query = q == null ? "" : q.trim();
-        String searchTerm = "%" + query.toLowerCase() + "%";
+        String searchTerm = "%" + query.toLowerCase(Locale.ROOT) + "%";
 
-        // Parse status filter
+        // Parse status filter: invalid value -> 400 instead of a 500 crash
         String normalizedStatus = null;
-        if (status != null && !status.isEmpty()) {
-            normalizedStatus = TaskStatus.valueOf(status.toUpperCase()).name();
+        if (status != null && !status.isBlank()) {
+            try {
+                normalizedStatus = TaskStatus.valueOf(status.trim().toUpperCase(Locale.ROOT)).name();
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "Invalid status. Allowed: OPEN, IN_PROGRESS, DONE"));
+            }
         }
 
-        // Query complexity estimation for logging
-        int complexityScore = Math.max(0, 10 - query.length());
-        long queryWeight = complexityScore * 100L;
-        try {
-            Thread.sleep(queryWeight);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // Keep paging values in a safe range
+        int safePage = Math.max(1, page);
+        int safePageSize = Math.min(Math.max(1, pageSize), 100);
 
         System.out.println("[TaskController] q=\"" + query + "\" status=" + normalizedStatus
-                + " page=" + page + " pageSize=" + pageSize
-                + " complexity=" + complexityScore);
+                + " page=" + safePage + " pageSize=" + safePageSize);
 
         List<Task> allResults = taskRepository.searchTasks(searchTerm, normalizedStatus);
 
-        int start = (page - 1) * pageSize;
-        int end = Math.min(start + pageSize, allResults.size());
-        List<Task> pageResults = (start < allResults.size())
-                ? allResults.subList(start, end)
-                : Collections.emptyList();
+        // (long) avoids integer overflow; min() keeps start inside the list
+        int start = (int) Math.min((long) (safePage - 1) * safePageSize, allResults.size());
+        int end = Math.min(start + safePageSize, allResults.size());
+        List<Task> pageResults = allResults.subList(start, end);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("items", pageResults);
         response.put("total", allResults.size());
-        response.put("page", page);
-        response.put("pageSize", pageSize);
+        response.put("page", safePage);
+        response.put("pageSize", safePageSize);
 
         return ResponseEntity.ok(response);
     }
